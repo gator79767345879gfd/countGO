@@ -1,297 +1,644 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Minus, Trash2, X } from 'lucide-react';
-
-export default function MultiCounterApp() {
-  const [counters, setCounters] = useState([]);
-  const [newCounterName, setNewCounterName] = useState('');
-  const [showModal, setShowModal] = useState(null);
-
-  // Load counters from memory on mount
-  useEffect(() => {
-    const loadCounters = async () => {
-      try {
-        const result = await window.storage.list('counter:');
-        if (result && result.keys) {
-          const loadedCounters = await Promise.all(
-            result.keys.map(async (key) => {
-              try {
-                const data = await window.storage.get(key);
-                return data ? JSON.parse(data.value) : null;
-              } catch {
-                return null;
-              }
-            })
-          );
-          setCounters(loadedCounters.filter(Boolean));
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monochrome Tracker (#212121)</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Configure Tailwind for monochrome theme with #212121 -->
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    // Define colors using the requested shade #212121
+                    colors: {
+                        'dark-bg': '#212121', 
+                        'light-bg': '#FFFFFF',
+                        'high-contrast': '#FFFFFF', // Used in dark mode for text/borders
+                    }
+                }
+            }
         }
-      } catch (error) {
-        console.log('No saved counters found');
-      }
-    };
-    loadCounters();
-  }, []);
+    </script>
+    <style>
+        /* Base styles for dark mode using #212121 */
+        .dark body {
+            color-scheme: dark;
+            background-color: #212121; /* Requested dark color */
+            color: #FFFFFF; /* High contrast foreground */
+        }
+        body {
+            background-color: #FFFFFF;
+            color: #212121; /* Dark foreground for light mode */
+        }
+        
+        /* Style for primary action button (Icon button style) */
+        .btn-action {
+            /* High contrast border and background */
+            background-color: transparent;
+            border: 2px solid currentColor;
+            transition: opacity 150ms ease-in-out, transform 100ms;
+        }
+        .btn-action:hover:not(:disabled) {
+            opacity: 0.7;
+        }
+        .btn-action:active:not(:disabled) {
+            transform: scale(0.98);
+        }
+        .btn-action:disabled {
+            opacity: 0.3;
+        }
+        
+        /* Input focus remains pure B/W, flat outline */
+        .input-minimal-focus:focus {
+            outline: 2px solid;
+            outline-color: currentColor;
+            outline-offset: -1px;
+        }
+    </style>
+</head>
+<body class="font-sans transition-colors duration-300">
 
-  // Save counter whenever it changes
-  const saveCounter = async (counter) => {
-    try {
-      await window.storage.set(`counter:${counter.id}`, JSON.stringify(counter));
-    } catch (error) {
-      console.error('Failed to save counter:', error);
-    }
-  };
-
-  // Check and reset counters based on their reset period
-  useEffect(() => {
-    const checkResets = () => {
-      const now = Date.now();
-      setCounters(prev => {
-        const updated = prev.map(counter => {
-          if (!counter.autoReset || !counter.lastReset) return counter;
-          
-          const timeSinceReset = now - counter.lastReset;
-          const resetInterval = {
-            'day': 24 * 60 * 60 * 1000,
-            'week': 7 * 24 * 60 * 60 * 1000,
-            'month': 30 * 24 * 60 * 60 * 1000,
-            'year': 365 * 24 * 60 * 60 * 1000
-          }[counter.autoReset];
-
-          if (timeSinceReset >= resetInterval) {
-            const resetCounter = { ...counter, count: 0, lastReset: now };
-            saveCounter(resetCounter);
-            return resetCounter;
-          }
-          return counter;
-        });
-        return updated;
-      });
-    };
-
-    const interval = setInterval(checkResets, 60000); // Check every minute
-    checkResets(); // Check immediately
-    return () => clearInterval(interval);
-  }, [counters]);
-
-  const addCounter = () => {
-    if (newCounterName.trim()) {
-      const newCounter = {
-        id: Date.now(),
-        name: newCounterName.trim(),
-        count: 0,
-        totalEver: 0,
-        createdAt: Date.now(),
-        autoReset: null,
-        lastReset: null
-      };
-      setCounters([...counters, newCounter]);
-      saveCounter(newCounter);
-      setNewCounterName('');
-    }
-  };
-
-  const updateCount = (id, delta) => {
-    setCounters(prev => prev.map(counter => {
-      if (counter.id === id) {
-        const newCount = Math.max(0, counter.count + delta);
-        const newTotalEver = delta > 0 ? counter.totalEver + delta : counter.totalEver;
-        const updated = { ...counter, count: newCount, totalEver: newTotalEver };
-        saveCounter(updated);
-        return updated;
-      }
-      return counter;
-    }));
-  };
-
-  const deleteCounter = async (id) => {
-    try {
-      await window.storage.delete(`counter:${id}`);
-      setCounters(counters.filter(counter => counter.id !== id));
-    } catch (error) {
-      console.error('Failed to delete counter:', error);
-    }
-  };
-
-  const resetCounter = (id) => {
-    setCounters(prev => prev.map(counter => {
-      if (counter.id === id) {
-        const updated = { ...counter, count: 0 };
-        saveCounter(updated);
-        return updated;
-      }
-      return counter;
-    }));
-  };
-
-  const setAutoReset = (id, period) => {
-    setCounters(prev => prev.map(counter => {
-      if (counter.id === id) {
-        const updated = { 
-          ...counter, 
-          autoReset: period,
-          lastReset: period ? Date.now() : null
-        };
-        saveCounter(updated);
-        return updated;
-      }
-      return counter;
-    }));
-    setShowModal(null);
-  };
-
-  const formatTimeSince = (timestamp) => {
-    const days = Math.floor((Date.now() - timestamp) / (1000 * 60 * 60 * 24));
-    if (days === 0) return 'Today';
-    if (days === 1) return '1 day ago';
-    if (days < 30) return `${days} days ago`;
-    if (days < 365) return `${Math.floor(days / 30)} months ago`;
-    return `${Math.floor(days / 365)} years ago`;
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-900 text-gray-100 p-4 md:p-8">
-      <div className="max-w-6xl mx-auto">
-        <h1 className="text-3xl font-light text-center mb-8 text-gray-100">
-          Counters
-        </h1>
-
-        {/* Add Counter */}
-        <div className="mb-8 max-w-md mx-auto">
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={newCounterName}
-              onChange={(e) => setNewCounterName(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && addCounter()}
-              placeholder="Counter name..."
-              className="flex-1 px-4 py-2 bg-gray-800 border border-gray-700 rounded focus:outline-none focus:border-gray-600 text-gray-100 placeholder-gray-500"
-            />
-            <button
-              onClick={addCounter}
-              className="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
-            >
-              Add
-            </button>
-          </div>
+    <!-- Main Application Container -->
+    <div id="app-container" class="min-h-screen flex flex-col items-center p-4 sm:p-8">
+        <!-- Loading Screen (Dark Grey B/W) -->
+        <div id="loading-screen" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-dark-bg/95 dark:bg-dark-bg/95">
+            <div class="flex flex-col items-center p-8">
+                <svg id="loader-icon" class="w-6 h-6 text-white animate-spin dark:text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21.5 2v6h-6"/><path d="M2.5 22v-6h6"/><path d="M22 11.5a10 10 0 0 0-3.6-7.5l-2.4 2.4"/><path d="M2 12.5a10 10 0 0 0 3.6 7.5l2.4-2.4"/>
+                </svg>
+                <p class="mt-4 text-xs font-light tracking-widest text-white dark:text-white">SYNCHRONIZING</p>
+            </div>
         </div>
 
-        {/* Counters Grid */}
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {counters.map(counter => (
-            <div
-              key={counter.id}
-              className="bg-gray-800 border border-gray-700 rounded-lg p-6"
-            >
-              <div className="flex justify-between items-start mb-6">
-                <div className="flex-1">
-                  <h3 className="text-lg font-medium text-gray-100 mb-1">
-                    {counter.name}
-                  </h3>
-                  <p className="text-xs text-gray-500">
-                    {formatTimeSince(counter.createdAt)}
-                  </p>
+        <div id="main-content" class="w-full max-w-4xl space-y-8">
+            <!-- Header and Controls -->
+            <header class="flex justify-between items-end border-b pb-3 border-current">
+                <div>
+                    <h1 class="text-3xl font-extrabold tracking-tighter">
+                        TRACKER
+                    </h1>
                 </div>
-                <button
-                  onClick={() => deleteCounter(counter.id)}
-                  className="text-gray-500 hover:text-gray-300 transition-colors"
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-
-              <div className="text-center mb-6">
-                <div className="text-6xl font-light text-gray-100 mb-3">
-                  {counter.count}
+                <div class="flex space-x-3 items-center text-xs">
+                    <!-- Sync Status -->
+                    <span id="sync-status" class="font-light flex items-center transition-colors duration-300 text-gray-500 dark:text-gray-500">
+                        <svg id="save-icon" class="inline w-3 h-3 mr-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h10"></path>
+                        </svg>
+                        <span id="sync-text">Synced</span>
+                    </span>
+                    <!-- Theme Toggle: Muted icon-only button -->
+                    <button id="theme-toggle" class="p-2 rounded-none text-current opacity-60 hover:opacity-100 transition duration-150" aria-label="Toggle Monochrome Theme">
+                        <svg id="theme-icon" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <!-- Placeholder icon, replaced by JS -->
+                        </svg>
+                    </button>
                 </div>
-                <div className="text-sm text-gray-500">
-                  Total: {counter.totalEver}
-                </div>
-                {counter.autoReset && (
-                  <div className="text-xs text-blue-400 mt-1">
-                    Resets every {counter.autoReset}
-                  </div>
-                )}
-              </div>
+            </header>
+            
+            <!-- Add New Counter Form -->
+            <form id="add-counter-form" class="flex gap-2">
+                <input
+                    id="new-counter-name"
+                    type="text"
+                    placeholder="New tracker name"
+                    class="flex-grow p-3 rounded-none bg-transparent border border-current text-sm input-minimal-focus"
+                />
+                <!-- Primary Button: High contrast, icon-only -->
+                <button
+                    type="submit"
+                    id="add-counter-button"
+                    disabled
+                    class="h-10 w-10 flex items-center justify-center rounded-none font-medium btn-action disabled:opacity-30"
+                    aria-label="Add Counter"
+                >
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+                </button>
+            </form>
 
-              <div className="flex gap-2 mb-3">
-                <button
-                  onClick={() => updateCount(counter.id, -1)}
-                  className="flex-1 py-3 bg-gray-700 hover:bg-gray-600 rounded transition-colors flex items-center justify-center"
-                >
-                  <Minus size={20} />
-                </button>
-                <button
-                  onClick={() => updateCount(counter.id, 1)}
-                  className="flex-1 py-3 bg-gray-700 hover:bg-gray-600 rounded transition-colors flex items-center justify-center"
-                >
-                  <Plus size={20} />
-                </button>
-              </div>
-
-              <div className="flex gap-2 text-sm">
-                <button
-                  onClick={() => resetCounter(counter.id)}
-                  className="flex-1 py-2 text-gray-400 hover:text-gray-200 transition-colors"
-                >
-                  Reset
-                </button>
-                <button
-                  onClick={() => setShowModal(counter.id)}
-                  className="flex-1 py-2 text-gray-400 hover:text-gray-200 transition-colors"
-                >
-                  Auto-reset
-                </button>
-              </div>
+            <!-- Counters List -->
+            <div id="counters-list" class="divide-y divide-current">
+                <!-- Counters will be injected here -->
             </div>
-          ))}
+            
+            <footer class="text-[10px] text-gray-500 pt-4 border-t border-current">
+                <span id="user-id-display">ID: N/A</span>
+            </footer>
         </div>
-
-        {counters.length === 0 && (
-          <div className="text-center text-gray-500 mt-12">
-            <p>No counters yet. Create your first one above.</p>
-          </div>
-        )}
-
-        {/* Auto-Reset Modal */}
-        {showModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
-            <div className="bg-gray-800 border border-gray-700 rounded-lg p-6 max-w-sm w-full">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-medium">Auto-Reset Period</h3>
-                <button
-                  onClick={() => setShowModal(null)}
-                  className="text-gray-500 hover:text-gray-300"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-              
-              <div className="space-y-2 mb-4">
-                {[
-                  { value: 'day', label: 'Every Day' },
-                  { value: 'week', label: 'Every Week' },
-                  { value: 'month', label: 'Every Month' },
-                  { value: 'year', label: 'Every Year' }
-                ].map(option => (
-                  <button
-                    key={option.value}
-                    onClick={() => setAutoReset(showModal, option.value)}
-                    className="w-full py-3 bg-gray-700 hover:bg-gray-600 rounded transition-colors text-left px-4"
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                onClick={() => setAutoReset(showModal, null)}
-                className="w-full py-2 text-gray-400 hover:text-gray-200 transition-colors"
-              >
-                Disable Auto-Reset
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
     </div>
-  );
-}
+
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global State and Constants
+        const state = {
+            db: null,
+            auth: null,
+            userId: null,
+            isAuthReady: false,
+            counters: [],
+            darkMode: true, // Default to dark monochrome
+            isLoading: true,
+            isSaving: false,
+        };
+
+        // --- Firebase Global Variables Setup ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        
+        // --- Utility Functions ---
+
+        /** Generates a simple, unique ID. */
+        const generateId = () => Math.random().toString(36).substring(2, 9);
+
+        /** Creates a new counter object. */
+        const createNewCounter = (name) => {
+            const now = Date.now();
+            return {
+                id: generateId(),
+                name: name,
+                total: 0,
+                daily: 0,
+                weekly: 0,
+                monthly: 0,
+                yearly: 0,
+                lastReset: {
+                    daily: now,
+                    weekly: now,
+                    monthly: now,
+                    yearly: now,
+                }
+            };
+        };
+        
+        const initialCounters = [
+            createNewCounter("Water (oz)"),
+            createNewCounter("Projects"),
+        ];
+
+        /**
+         * Checks if a counter needs to be reset for a given period.
+         */
+        const shouldReset = (lastResetTimestamp, period) => {
+            if (lastResetTimestamp === 0) return false;
+
+            const lastDate = new Date(lastResetTimestamp);
+            const now = new Date();
+
+            if (period === 'daily') {
+                return lastDate.toDateString() !== now.toDateString();
+            } 
+            
+            if (period === 'weekly') {
+                const msInWeek = 7 * 24 * 60 * 60 * 1000;
+                return (now.getTime() - lastDate.getTime() > msInWeek) || (now.getDay() < lastDate.getDay());
+            }
+            
+            if (period === 'monthly') {
+                return lastDate.getMonth() !== now.getMonth() || lastDate.getFullYear() !== now.getFullYear();
+            } 
+            
+            if (period === 'yearly') {
+                return lastDate.getFullYear() !== now.getFullYear();
+            }
+            
+            return false;
+        };
+
+        // --- Debounce Logic ---
+        let debounceTimer;
+        let pendingSaveData = null;
+
+        const triggerDebouncedSave = (data) => {
+            pendingSaveData = data;
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                if (pendingSaveData) {
+                    saveCountersToDb(pendingSaveData);
+                    pendingSaveData = null; // Clear after triggering save
+                }
+            }, 500);
+        }
+
+        const updateStatus = (text) => {
+            const statusEl = document.getElementById('sync-status');
+            const saveIconEl = document.getElementById('save-icon');
+            const statusTextEl = document.getElementById('sync-text');
+
+            if (statusEl && saveIconEl && statusTextEl) {
+                // Remove all color/animation classes
+                statusEl.classList.remove('text-gray-500', 'dark:text-gray-500', 'text-white', 'dark:text-black', 'text-black', 'dark:text-white');
+                saveIconEl.classList.remove('animate-pulse');
+
+                // Update text
+                statusTextEl.textContent = text;
+                
+                // Set the correct monochrome colors based on theme and status
+                if (text === 'Saving...') {
+                    statusEl.classList.add('text-gray-500', 'dark:text-gray-500');
+                    saveIconEl.classList.add('animate-pulse');
+                } else if (text === 'Synced') {
+                    statusEl.classList.add('text-gray-500', 'dark:text-gray-500');
+                } else if (text === 'Error') {
+                    // High contrast error state (white on dark-bg, or dark-bg on white)
+                    statusEl.classList.add(state.darkMode ? 'text-white' : 'text-dark-bg');
+                }
+            }
+        };
+
+        /**
+         * Generates the document reference for the user's private data.
+         * Path: /artifacts/{appId}/users/{userId}/counters/userCounters
+         */
+        const getCounterDocRef = (db, userId) => {
+            if (!db || !userId) return null;
+            return doc(db, `/artifacts/${appId}/users/${userId}/counters/userCounters`);
+        };
+
+
+        // --- Firestore Interaction ---
+
+        const saveCountersToDb = async (data) => {
+            if (!state.db || !state.userId) return;
+            const counterDocRef = getCounterDocRef(state.db, state.userId);
+            if (!counterDocRef) {
+                console.error("Cannot save: Document reference is null.");
+                return;
+            }
+            
+            updateStatus('Saving...');
+            try {
+                // Implementing exponential backoff for resilience
+                const maxRetries = 5;
+                for (let i = 0; i < maxRetries; i++) {
+                    try {
+                        await setDoc(counterDocRef, { counters: data }, { merge: true });
+                        updateStatus('Synced');
+                        return; // Success
+                    } catch (error) {
+                        if (i < maxRetries - 1) {
+                            const delay = Math.pow(2, i) * 1000;
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                        } else {
+                            throw error; // Throw error on last retry
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Error writing document after retries: ", e);
+                updateStatus('Error');
+            }
+        }
+        
+        // --- Core Reset Logic ---
+        const checkAndResetCounters = (currentCounters) => {
+            let needsSave = false;
+            const now = Date.now();
+
+            const updatedCounters = currentCounters.map(counter => {
+                let updatedCounter = { ...counter };
+                let counterModified = false;
+
+                ['daily', 'weekly', 'monthly', 'yearly'].forEach(period => {
+                    // Ensure lastReset structure exists
+                    if (!updatedCounter.lastReset) {
+                         updatedCounter.lastReset = { daily: 0, weekly: 0, monthly: 0, yearly: 0 };
+                    }
+                    const lastResetTimestamp = updatedCounter.lastReset[period] || 0;
+                    
+                    if (shouldReset(lastResetTimestamp, period)) {
+                        updatedCounter[period] = 0;
+                        updatedCounter.lastReset = { ...updatedCounter.lastReset, [period]: now };
+                        counterModified = true;
+                        needsSave = true;
+                    }
+                });
+
+                return counterModified ? updatedCounter : counter;
+            });
+            
+            if (needsSave) {
+                state.counters = updatedCounters;
+                triggerDebouncedSave(updatedCounters);
+            }
+            return updatedCounters;
+        };
+
+
+        // --- Update Functions ---
+
+        const updateCountersState = (newCounters) => {
+            state.counters = newCounters;
+            renderCounters();
+        }
+
+        const handleUpdateCounter = (id, delta) => {
+            const updatedCounters = state.counters.map(c => {
+                if (c.id === id) {
+                    // Prevent total from going negative
+                    const newTotal = Math.max(0, c.total + delta);
+                    const newDaily = Math.max(0, c.daily + delta);
+                    const newWeekly = Math.max(0, c.weekly + delta);
+                    const newMonthly = Math.max(0, c.monthly + delta);
+                    const newYearly = Math.max(0, c.yearly + delta);
+
+                    return { 
+                        ...c, 
+                        total: newTotal,
+                        daily: newDaily,
+                        weekly: newWeekly,
+                        monthly: newMonthly,
+                        yearly: newYearly,
+                    };
+                }
+                return c;
+            });
+            updateCountersState(updatedCounters);
+            triggerDebouncedSave(updatedCounters);
+        };
+        
+        const handleDeleteCounter = (id) => {
+            const updatedCounters = state.counters.filter(c => c.id !== id);
+            updateCountersState(updatedCounters);
+            triggerDebouncedSave(updatedCounters);
+        };
+
+        const handleAddCounter = (e) => {
+            e.preventDefault();
+            const inputEl = document.getElementById('new-counter-name');
+            const buttonEl = document.getElementById('add-counter-button');
+            const newCounterName = inputEl.value.trim();
+            if (!newCounterName) return;
+
+            const newCounter = createNewCounter(newCounterName);
+            const updatedCounters = [...state.counters, newCounter];
+            
+            updateCountersState(updatedCounters);
+            triggerDebouncedSave(updatedCounters);
+            
+            inputEl.value = ''; // Clear input
+            buttonEl.disabled = true;
+        };
+
+        // --- Rendering ---
+
+        const renderCounter = (counter) => {
+            // The delete button is here, using a high-contrast 'X' icon and muted color
+            return `
+                <div 
+                    id="counter-${counter.id}" 
+                    class="py-4 px-1 transition duration-200 ease-in-out"
+                >
+                    <div class="flex justify-between items-center mb-3">
+                        <h2 class="text-xl font-medium tracking-tight truncate">${counter.name.toUpperCase()}</h2>
+                        <!-- Delete Button -->
+                        <button
+                            onclick="window.handleDeleteCounter('${counter.id}')"
+                            class="p-1 rounded-none text-gray-500 hover:text-current transition btn-action border-0 hover:bg-transparent"
+                            aria-label="Delete ${counter.name}"
+                        >
+                            <!-- Lucide 'X' icon -->
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                        </button>
+                    </div>
+                    
+                    <!-- Value Grid: High-contrast, tight layout -->
+                    <div class="grid grid-cols-5 gap-3 sm:gap-4 text-center text-xs mb-3">
+                        ${['daily', 'weekly', 'monthly', 'yearly'].map(period => `
+                            <div class="py-2 border-r border-current last:border-r-0">
+                                <p class="text-3xl font-extrabold tracking-tighter">${counter[period]}</p>
+                                <p class="text-[10px] font-medium opacity-50 pt-1">${period.toUpperCase()}</p>
+                            </div>
+                        `).join('')}
+                        <!-- Total - No separator, visually distinct -->
+                        <div class="py-2">
+                            <p class="text-4xl font-extrabold tracking-tighter">${counter.total}</p>
+                            <p class="text-[10px] font-bold tracking-widest pt-1">TOTAL</p>
+                        </div>
+                    </div>
+
+                    <!-- Increment/Decrement Buttons: Icon-based actions -->
+                    <div class="flex space-x-2 justify-end pt-2">
+                        <button
+                            onclick="window.handleUpdateCounter('${counter.id}', -1)"
+                            class="h-8 w-8 flex items-center justify-center rounded-none btn-action"
+                            aria-label="Decrement ${counter.name}"
+                        >
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/></svg> 
+                        </button>
+
+                        <button
+                            onclick="window.handleUpdateCounter('${counter.id}', 1)"
+                            class="h-8 w-8 flex items-center justify-center rounded-none btn-action"
+                            aria-label="Increment ${counter.name}"
+                        >
+                            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14"/></svg> 
+                        </button>
+                    </div>
+                </div>
+            `;
+        };
+
+
+        const renderCounters = () => {
+            const listEl = document.getElementById('counters-list');
+            if (!listEl) return;
+
+            if (state.counters.length === 0) {
+                const emptyClass = state.darkMode 
+                    ? 'text-gray-600' 
+                    : 'text-gray-400';
+                listEl.innerHTML = `
+                    <div class="text-center py-10 font-light text-sm ${emptyClass}">
+                        NO TRACKERS FOUND. ADD A NEW ONE ABOVE.
+                    </div>
+                `;
+            } else {
+                listEl.innerHTML = state.counters.map(renderCounter).join('');
+            }
+        };
+        
+        const renderTheme = () => {
+            const html = document.documentElement;
+            const iconEl = document.getElementById('theme-icon');
+            
+            if (state.darkMode) {
+                html.classList.add('dark');
+                // Render Sun icon (for switching to light)
+                iconEl.innerHTML = '<path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l1.4-1.4M16.3 6.3l1.4-1.4M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/>';
+            } else {
+                html.classList.remove('dark');
+                // Render Moon icon (for switching to dark)
+                iconEl.innerHTML = '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>';
+            }
+        };
+
+        const renderLoading = () => {
+            const loadingEl = document.getElementById('loading-screen');
+            const mainContentEl = document.getElementById('main-content');
+            
+            if (state.isLoading) {
+                loadingEl.classList.remove('hidden');
+                mainContentEl.classList.add('hidden');
+            } else {
+                loadingEl.classList.add('hidden');
+                mainContentEl.classList.remove('hidden');
+            }
+        };
+
+
+        // --- Initialization and Events ---
+
+        const initFirebase = async () => {
+            if (!firebaseConfig.apiKey) {
+                console.warn("Firebase config is missing. Data will not be persistent.");
+                state.isAuthReady = true;
+                state.counters = initialCounters;
+                state.isLoading = false;
+                renderLoading();
+                renderCounters();
+                return;
+            }
+
+            try {
+                const app = initializeApp(firebaseConfig);
+                state.db = getFirestore(app);
+                state.auth = getAuth(app);
+            } catch (e) {
+                console.error("Failed to initialize Firebase:", e);
+                state.isAuthReady = true;
+                state.counters = initialCounters;
+                state.isLoading = false;
+                renderLoading();
+                renderCounters();
+                return;
+            }
+
+            // Authentication
+            onAuthStateChanged(state.auth, (user) => {
+                state.isAuthReady = true; // Auth check is complete regardless of result
+
+                if (user) {
+                    state.userId = user.uid;
+                    document.getElementById('user-id-display').textContent = `ID: ${state.userId}`;
+                    startFirestoreListener(); // Start listener only when we have a user/userId
+                } else {
+                    state.userId = null; 
+                    document.getElementById('user-id-display').textContent = `ID: N/A`;
+                    if (state.isLoading) {
+                        state.counters = initialCounters;
+                        state.isLoading = false;
+                        renderLoading();
+                        renderCounters();
+                    }
+                }
+            });
+
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(state.auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(state.auth);
+                }
+            } catch (error) {
+                console.error("Firebase authentication failed:", error);
+            }
+        };
+
+        const startFirestoreListener = () => {
+            if (!state.db || !state.isAuthReady) {
+                if (state.isAuthReady && state.isLoading) {
+                    state.counters = initialCounters;
+                    state.isLoading = false;
+                    renderLoading();
+                    renderCounters();
+                }
+                return;
+            }
+
+            const counterDocRef = getCounterDocRef(state.db, state.userId);
+
+            if (!counterDocRef) {
+                console.error("Cannot start listener: User ID is required for document path.");
+                state.counters = initialCounters;
+                state.isLoading = false;
+                renderLoading();
+                renderCounters();
+                return;
+            }
+
+            onSnapshot(counterDocRef, (docSnapshot) => {
+                let loadedCounters = initialCounters;
+                if (docSnapshot.exists()) {
+                    const data = docSnapshot.data();
+                    if (data.counters && Array.isArray(data.counters)) {
+                        loadedCounters = data.counters;
+                    } 
+                } else {
+                    triggerDebouncedSave(initialCounters);
+                }
+                
+                const finalCounters = checkAndResetCounters(loadedCounters);
+                
+                state.counters = finalCounters;
+                state.isLoading = false;
+                
+                renderLoading();
+                renderCounters();
+                updateStatus('Synced');
+
+            }, (error) => {
+                console.error("Error listening to counter changes:", error);
+                state.counters = initialCounters;
+                state.isLoading = false;
+                renderLoading();
+                renderCounters();
+                updateStatus('Error');
+            });
+        };
+        
+        const setupEventListeners = () => {
+            document.getElementById('theme-toggle').addEventListener('click', () => {
+                state.darkMode = !state.darkMode;
+                renderTheme();
+                renderCounters(); 
+                // Re-update status to ensure it gets the correct theme classes
+                updateStatus(document.getElementById('sync-text').textContent);
+            });
+
+            const inputEl = document.getElementById('new-counter-name');
+            const buttonEl = document.getElementById('add-counter-button');
+
+            inputEl.addEventListener('input', () => {
+                buttonEl.disabled = !inputEl.value.trim();
+            });
+
+            document.getElementById('add-counter-form').addEventListener('submit', handleAddCounter);
+
+            // Export handlers to global scope for use in inline onclick attributes
+            window.handleUpdateCounter = handleUpdateCounter;
+            window.handleDeleteCounter = handleDeleteCounter;
+        };
+        
+        // --- Main Execution ---
+        window.onload = () => {
+            renderLoading();
+            renderTheme();
+            initFirebase();
+            setupEventListeners();
+        };
+
+    </script>
+</body>
+</html>
