@@ -1,0 +1,330 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, setDoc, onSnapshot, collection, getDocs, runTransaction, query, where, limit } from 'firebase/firestore';
+import { Plus, Minus, X, Loader2, Save } from 'lucide-react';
+
+// --- Firebase Global Variables Setup ---
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+// FIX: Changed __initialAuthToken (camelCase) to __initial_auth_token (snake_case)
+const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+// The path in Firestore for our public counter document
+const COUNTERS_COLLECTION_PATH = `/artifacts/${appId}/public/data/counters`;
+const COUNTER_DOC_ID = 'userCounters'; // Single document to hold the array of counters
+
+/**
+ * Generates a simple, unique ID.
+ */
+const generateId = () => Math.random().toString(36).substring(2, 9);
+
+// Initial state structure for a counter item
+const initialCounters = [
+  { id: generateId(), name: "Water Glasses", value: 0 },
+  { id: generateId(), name: "Coding Sprints", value: 0 },
+];
+
+// Custom debounce hook for saving state
+const useDebouncedSave = (callback, delay) => {
+  const [valueToSave, setValueToSave] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (valueToSave === null) return;
+
+    setIsSaving(true);
+    const handler = setTimeout(() => {
+      callback(valueToSave).then(() => {
+        setIsSaving(false);
+        setValueToSave(null); // Clear value after successful save
+      }).catch(err => {
+        console.error("Debounced save error:", err);
+        setIsSaving(false);
+      });
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [valueToSave, delay, callback]);
+
+  return { triggerSave: setValueToSave, isSaving };
+};
+
+
+// Main App Component
+const App = () => {
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [userId, setUserId] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [counters, setCounters] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [newCounterName, setNewCounterName] = useState('');
+
+  // 1. Firebase Initialization and Authentication
+  useEffect(() => {
+    try {
+      if (!firebaseConfig.apiKey) {
+         console.warn("Firebase config is missing. Data will not be persistent.");
+         setIsAuthReady(true);
+         setCounters(initialCounters);
+         setIsLoading(false);
+         return;
+      }
+
+      const app = initializeApp(firebaseConfig);
+      const dbInstance = getFirestore(app);
+      const authInstance = getAuth(app);
+
+      setDb(dbInstance);
+      setAuth(authInstance);
+
+      // Sign in or set up auth state change listener
+      const authenticate = async () => {
+        try {
+          if (initialAuthToken) {
+            await signInWithCustomToken(authInstance, initialAuthToken);
+          } else {
+            await signInAnonymously(authInstance);
+          }
+        } catch (error) {
+          console.error("Firebase authentication failed:", error);
+        }
+      };
+
+      const unsubscribe = onAuthStateChanged(authInstance, (user) => {
+        if (user) {
+          setUserId(user.uid);
+          // Only set isAuthReady to true after a user object is confirmed
+          setIsAuthReady(true); 
+        } else {
+          // If sign-in failed or user signed out, set authReady to true but userId to null
+          setUserId(null);
+          setIsAuthReady(true);
+        }
+      });
+
+      authenticate();
+      return () => unsubscribe();
+
+    } catch (e) {
+      console.error("Failed to initialize Firebase:", e);
+      setIsAuthReady(true); // Allow UI to proceed even if init fails
+      setCounters(initialCounters);
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Firestore reference memo
+  const counterDocRef = useMemo(() => {
+    if (db) {
+      return doc(db, COUNTERS_COLLECTION_PATH, COUNTER_DOC_ID);
+    }
+    return null;
+  }, [db]);
+
+  // Function to save the current counters array to Firestore
+  const saveCountersToDb = useCallback(async (currentCounters) => {
+    // CRITICAL: Only attempt to save if DB is ready, auth is ready, AND we have a userId
+    if (!db || !isAuthReady || !counterDocRef || !userId) return;
+
+    try {
+      // Use setDoc with merge: true to ensure we only update 'counters' field
+      await setDoc(counterDocRef, { counters: currentCounters }, { merge: true });
+    } catch (e) {
+      console.error("Error writing document: ", e);
+    }
+  }, [db, isAuthReady, counterDocRef, userId]);
+
+  // Debounced save for updates
+  const { triggerSave, isSaving } = useDebouncedSave(saveCountersToDb, 500);
+
+  // 2. Real-time Listener (onSnapshot)
+  useEffect(() => {
+    // CRITICAL FIX: Only run onSnapshot if DB is ready AND Auth is complete (isAuthReady=true) AND we have a user ID.
+    // The user ID ensures we have the necessary permissions for the public path.
+    if (!db || !isAuthReady || !counterDocRef || !userId) {
+      if (isAuthReady && isLoading) {
+        // If auth is ready but we lack a userId (i.e., auth failed), or lack config, stop loading.
+        // We will default to initialCounters in this case.
+        setIsLoading(false); 
+      }
+      return;
+    }
+    
+    // console.log("Starting onSnapshot listener for doc:", COUNTER_DOC_ID, "for user:", userId);
+
+    const unsubscribe = onSnapshot(counterDocRef, (docSnapshot) => {
+      if (docSnapshot.exists()) {
+        const data = docSnapshot.data();
+        if (data.counters && Array.isArray(data.counters)) {
+          setCounters(data.counters);
+        } else {
+          // Initialize if document exists but is empty or missing 'counters' field
+          setCounters(initialCounters);
+          triggerSave(initialCounters);
+        }
+      } else {
+        // Document does not exist, initialize and create it
+        setCounters(initialCounters);
+        triggerSave(initialCounters);
+      }
+      setIsLoading(false);
+    }, (error) => {
+      console.error("Error listening to counter changes:", error);
+      // Fallback to local initial state on error
+      setCounters(initialCounters);
+      setIsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [db, isAuthReady, counterDocRef, isLoading, triggerSave, userId]);
+
+
+  // Helper function to update counters array and trigger save
+  const updateAndSave = (updatedCounters) => {
+    setCounters(updatedCounters);
+    triggerSave(updatedCounters);
+  };
+
+  // Handler for adding a new counter
+  const handleAddCounter = (e) => {
+    e.preventDefault();
+    if (!newCounterName.trim()) return;
+
+    const newCounter = {
+      id: generateId(),
+      name: newCounterName.trim(),
+      value: 0,
+    };
+
+    updateAndSave([...counters, newCounter]);
+    setNewCounterName('');
+  };
+
+  // Handler for incrementing/decrementing a counter
+  const handleUpdateCounter = (id, delta) => {
+    const updatedCounters = counters.map(c =>
+      c.id === id ? { ...c, value: c.value + delta } : c
+    );
+    updateAndSave(updatedCounters);
+  };
+
+  // Handler for deleting a counter
+  const handleDeleteCounter = (id) => {
+    const updatedCounters = counters.filter(c => c.id !== id);
+    updateAndSave(updatedCounters);
+  };
+
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50 p-4">
+        <div className="flex flex-col items-center p-8 bg-white rounded-xl shadow-2xl">
+          <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
+          <p className="mt-4 text-gray-600 font-semibold">Loading and syncing counters...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center p-4 sm:p-8 font-sans">
+      <div className="w-full max-w-2xl bg-white rounded-3xl shadow-2xl p-6 sm:p-8">
+        <header className="mb-8 border-b pb-4">
+          <h1 className="text-3xl font-extrabold text-indigo-700 tracking-tight">
+            Multi-Counter Tracker
+          </h1>
+          <p className="text-gray-500 mt-1 flex items-center justify-between text-sm">
+            Track anything you need. Data is synced in real-time.
+            <span className={`text-xs font-medium px-2 py-1 rounded-full ${isSaving ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'}`}>
+              <Save className={`inline w-3 h-3 mr-1 ${isSaving ? 'animate-pulse' : ''}`} />
+              {isSaving ? 'Saving...' : 'Synced'}
+            </span>
+          </p>
+          <p className="text-xs text-gray-400 mt-2">
+            User ID: {userId || 'N/A (Anonymous)'}
+          </p>
+        </header>
+
+        {/* Add New Counter Form */}
+        <form onSubmit={handleAddCounter} className="mb-8 flex gap-3">
+          <input
+            type="text"
+            placeholder="Name your new counter (e.g., Pushups, Projects)"
+            value={newCounterName}
+            onChange={(e) => setNewCounterName(e.target.value)}
+            className="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 shadow-sm transition duration-150"
+          />
+          <button
+            type="submit"
+            disabled={!newCounterName.trim()}
+            className="bg-indigo-600 text-white p-3 rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 disabled:bg-indigo-300 flex items-center justify-center font-semibold"
+          >
+            <Plus className="w-5 h-5 mr-1" />
+            Add Counter
+          </button>
+        </form>
+
+        {/* Counters List */}
+        <div className="space-y-4">
+          {counters.length === 0 ? (
+            <div className="text-center p-10 bg-indigo-50 rounded-xl text-indigo-600 font-medium border border-indigo-200">
+              No counters yet! Add one above to start tracking.
+            </div>
+          ) : (
+            counters.map(counter => (
+              <div
+                key={counter.id}
+                className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-lg transition duration-200 ease-in-out"
+              >
+                <div className="flex-grow">
+                  <span className="text-xl font-semibold text-gray-700 truncate block">
+                    {counter.name}
+                  </span>
+                </div>
+                <div className="flex items-center space-x-3">
+                  {/* Counter Value */}
+                  <div className="text-4xl font-extrabold w-20 text-center text-indigo-600 bg-indigo-50 rounded-lg p-1">
+                    {counter.value}
+                  </div>
+
+                  {/* Decrement Button */}
+                  <button
+                    onClick={() => handleUpdateCounter(counter.id, -1)}
+                    className="bg-red-500 text-white p-2 rounded-full shadow-lg hover:bg-red-600 transition duration-150 transform hover:scale-105"
+                    aria-label={`Decrement ${counter.name}`}
+                  >
+                    <Minus className="w-6 h-6" />
+                  </button>
+
+                  {/* Increment Button */}
+                  <button
+                    onClick={() => handleUpdateCounter(counter.id, 1)}
+                    className="bg-green-500 text-white p-2 rounded-full shadow-lg hover:bg-green-600 transition duration-150 transform hover:scale-105"
+                    aria-label={`Increment ${counter.name}`}
+                  >
+                    <Plus className="w-6 h-6" />
+                  </button>
+
+                  {/* Delete Button */}
+                  <button
+                    onClick={() => handleDeleteCounter(counter.id)}
+                    className="bg-gray-200 text-gray-500 p-1 rounded-full hover:bg-red-100 hover:text-red-500 transition duration-150 ml-2"
+                    aria-label={`Delete ${counter.name}`}
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
